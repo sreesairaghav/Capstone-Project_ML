@@ -1,0 +1,200 @@
+ACCIDENT DETECTION + SEVERITY PREDICTION SYSTEM - PROJECT CONTEXT
+==================================================================
+
+PROJECT GOAL
+------------
+Build a complete software simulation pipeline:
+LIVE SENSOR DATA → CRASH DETECTION → SEVERITY PREDICTION → EMERGENCY DECISION
+→ AMBULANCE DISPATCH → V2V COMMUNICATION → GREEN CORRIDOR
+
+All simulated - no real hardware, GPS, V2V, or emergency services.
+
+--------------------------------------------------------------------
+PROJECT STRUCTURE
+--------------------------------------------------------------------
+AccidentDetectionML/
+├── data/
+│   ├── raw/
+│   │   ├── ciren/                    # 13 CIREN SAS files (case, gv, ve, injury, etc.)
+│   │   └── driving_behavior/         # train_motion_data.csv, test_motion_data.csv
+│   ├── processed/
+│   │   ├── ciren_severity.csv        # 2101 rows × 53 cols (merged CIREN)
+│   │   └── driving_features.csv      # 364 windows × 37 features
+│   └── live/                         # Auto-generated sensor logs (CSV)
+├── models/
+│   ├── ciren_severity_model.pkl      # RandomForest pipeline (15.7 MB)
+│   ├── driving_behavior_model.pkl    # RandomForest (2.6 MB)
+│   └── feature_columns.pkl           # 37 feature names
+└── src/
+    ├── NEW MODULES (created this session):
+    │   ├── live_sensor_simulator.py  # Part 1: MPU6050 simulation
+    │   ├── crash_detector.py         # Part 2: Sliding window crash detection
+    │   ├── predict_severity.py       # Part 4: CIREN severity + sensor mapping
+    │   ├── emergency_decision.py     # Part 5: MINOR/SERIOUS/CRITICAL logic
+    │   ├── location_simulator.py     # Part 6: GPS simulation
+    │   ├── ambulance_simulator.py    # Part 7: Ambulance dispatch
+    │   ├── v2v_simulator.py          # Part 8: 500m V2V warning zone
+    │   ├── green_corridor.py         # Part 9: Traffic signal coordination
+    │   └── main.py                   # Part 10: Complete 45s pipeline demo
+    │
+    └── EXISTING (training/inspection):
+        ├── prepare_dataset.py
+        ├── train_model.py
+        ├── prepare_ciren_dataset.py
+        ├── train_ciren_model.py
+        ├── test_model.py
+        ├── live_detection.py
+        ├── inspect_ciren.py
+        └── inspect_ciren_values.py
+
+--------------------------------------------------------------------
+KEY COMPONENTS
+--------------------------------------------------------------------
+
+1. LIVE SENSOR SIMULATOR (live_sensor_simulator.py)
+   - Modes: NORMAL, SLOW, AGGRESSIVE, CRASH
+   - Learns statistics from driving_behavior/train_motion_data.csv
+   - CRASH mode: Physical 4-phase pattern (pre-impact, impact, post-impact, stabilization)
+   - Peak accel: 30-60g, Peak gyro: 5-35 rad/s depending on crash type
+
+2. CRASH DETECTOR (crash_detector.py)
+   - Sliding window: 20 samples @ 20Hz = 1 second
+   - Features: max/mean/std acc_mag, gyro_mag, jerk, acc_change, impact_duration
+   - Thresholds: acc_mag>8g, acc_change>5g, gyro_mag>3rad/s, consecutive≥5, duration 3-15
+   - Output: NO_CRASH / POSSIBLE_CRASH / CRASH_DETECTED with confidence
+
+3. SEVERITY PREDICTOR (predict_severity.py)
+   - Loads models/ciren_severity_model.pkl
+   - Maps sensor features → CIREN features (prototype, documented limitations)
+   - Sensor-derived: peak_acc, peak_gyro, duration → Delta-V, Energy, DVEST, DVLAT, DVLONG
+   - Defaults for unavailable: vehicle type, road conditions, crush profile
+   - Output: MINOR/SERIOUS/CRITICAL with probabilities
+
+4. EMERGENCY DECISION (emergency_decision.py)
+   | Severity | Action                    | Ambulance | V2V | Green Corridor |
+   |----------|---------------------------|-----------|-----|----------------|
+   | MINOR    | LOG_ONLY                  | NO        | NO  | NO             |
+   | SERIOUS  | ALERT_AUTHORITIES         | NO        | NO  | NO             |
+   | CRITICAL | FULL_EMERGENCY_RESPONSE   | YES       | YES | YES            |
+
+5. LOCATION SIMULATOR (location_simulator.py)
+   - Simulated GPS with movement, crash location freeze
+   - Haversine distance calculation
+
+6. AMBULANCE SIMULATOR (ambulance_simulator.py)
+   - 6 ambulances randomly distributed ~10km radius
+   - Nearest available dispatch, ETA calculation
+
+7. V2V SIMULATOR (v2v_simulator.py)
+   - 500m warning zone, 1000m communication range
+   - Messages: EMERGENCY_APPROACHING, ACCIDENT_AHEAD, GREEN_CORRIDOR_ACTIVE
+
+8. GREEN CORRIDOR (green_corridor.py)
+   - 4 traffic signals along corridor
+   - Emergency mode: all GREEN; Normal: cyclic RED/YELLOW/GREEN
+
+9. MAIN PIPELINE (main.py)
+   - 45-second demo: NORMAL(0-15s) → AGGRESSIVE(15-30s) → CRASH(30s+)
+   - Logs to data/live/live_sensor_data_<timestamp>.csv
+   - Columns: Timestamp, AccX/Y/Z, GyroX/Y/Z, AccMag, GyroMag, DrivingBehaviour, CrashStatus, CrashConfidence, Severity, Lat, Lon
+
+--------------------------------------------------------------------
+CRITICAL FINDING: TARGET LEAKAGE IN CIREN MODEL
+--------------------------------------------------------------------
+Two models trained on same data:
+
+| Model | Features | Accuracy | Balanced Acc | CRITICAL Recall |
+|-------|----------|----------|--------------|-----------------|
+| A (with leakage) | Includes MAIS, ISS, FATAL | **99.3%** | **97.0%** | 91% |
+| B (no leakage)   | Excludes MAIS, ISS, FATAL | **72.4%** | **33.5%** | 3% |
+
+MAIS/ISS/FATAL directly encode the severity target (constructed from MAIS).
+Real-time MPU6050 cannot provide these → Model B is the honest baseline.
+The 99% accuracy is NOT real-world performance.
+
+--------------------------------------------------------------------
+DRIVING BEHAVIOR MODEL PERFORMANCE
+--------------------------------------------------------------------
+- 37 window features (mean/std/min/max per axis + magnitudes + jerk)
+- Classes: NORMAL (33%), SLOW (37%), AGGRESSIVE (31%)
+- Test Accuracy: 61.6%
+- Confusion: NORMAL often confused with others
+
+--------------------------------------------------------------------
+HOW TO RUN
+--------------------------------------------------------------------
+# Full pipeline demo (45 seconds)
+cd C:\Users\SSR\AccidentDetectionML
+python src/main.py
+
+# Individual component tests
+python src/live_sensor_simulator.py
+python src/crash_detector.py
+python src/predict_severity.py
+python src/emergency_decision.py
+python src/location_simulator.py
+python src/ambulance_simulator.py
+python src/v2v_simulator.py
+python src/green_corridor.py
+
+# Model validation (target leakage proof)
+python -c "
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import accuracy_score, balanced_accuracy_score
+df = pd.read_csv('data/processed/ciren_severity.csv')
+X = df.drop(columns=['SEVERITY','SEVERITY_CODE','CASENO','VEHNO','CIRENID','CASEYEAR','MAIS','ISS','FATAL'])
+X = X.select_dtypes(include=['int64','float64'])
+X = X.loc[:, X.nunique()>1]
+X = X.drop(columns=X.columns[X.isna().mean()>0.8])
+y = df['SEVERITY']
+X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2,random_state=42,stratify=y)
+pipe = Pipeline([('imp',SimpleImputer()),('clf',RandomForestClassifier(n_estimators=400,class_weight='balanced',random_state=42,n_jobs=-1))])
+pipe.fit(X_train,y_train)
+print('Model B (no leakage) Accuracy:', accuracy_score(y_test,pipe.predict(X_test)))
+print('Model B Balanced Acc:', balanced_accuracy_score(y_test,pipe.predict(X_test)))
+"
+
+--------------------------------------------------------------------
+ESP32 INTEGRATION ARCHITECTURE
+--------------------------------------------------------------------
+ESP32 + MPU6050
+    ↓ JSON: {"accX":..,"accY":..,"accZ":..,"gyroX":..,"gyroY":..,"gyroZ":..,"timestamp":..}
+Sensor Stream → Feature Extraction (same as live_sensor_simulator)
+              → CrashDetector.update(acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z)
+              → If CRASH_DETECTED:
+                  → SeverityPredictor.predict_from_window(buffers...)
+                  → EmergencyDecisionEngine.decide(severity, confidence, location)
+                  → If CRITICAL: AmbulanceSimulator + V2VSimulator + GreenCorridorSimulator
+
+Replace LiveSensorSimulator with real sensor reader implementing same interface.
+
+--------------------------------------------------------------------
+PRESENTATION FLOW
+--------------------------------------------------------------------
+1. Show data/models: ls data\processed && ls models
+2. Component demos (each ~10 sec):
+   python src/live_sensor_simulator.py
+   python src/crash_detector.py
+   python src/predict_severity.py
+   python src/emergency_decision.py
+   python src/location_simulator.py
+   python src/ambulance_simulator.py
+   python src/v2v_simulator.py
+   python src/green_corridor.py
+3. Target leakage evidence (Model B = 72%)
+4. FULL DEMO: python src/main.py
+5. Show logs: data/live/live_sensor_data_*.csv
+
+--------------------------------------------------------------------
+KNOWN LIMITATIONS
+--------------------------------------------------------------------
+- Severity prediction is PROTOTYPE: sensor-to-CIREN mapping uses defaults for 30+ features
+- CIREN Model B (honest) only 72% accuracy, 33% balanced - not deployment ready
+- Driving behavior model only 62% accuracy
+- No real GPS, V2V hardware, ambulance API, traffic signal control
+- All emergency responses are SIMULATED prints only
+- Crash detector thresholds tuned for demo, not validated on real crashes
